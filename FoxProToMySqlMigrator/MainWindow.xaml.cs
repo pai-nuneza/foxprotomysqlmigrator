@@ -32,11 +32,8 @@ namespace FoxProToMySqlMigrator
         private bool _settingsLoaded;
         private List<string> _neededTables = new();
         private bool _neededTablesFileLoaded;
-
-        private sealed class NeededTablesFile
-        {
-            public List<string> Tables { get; set; } = new();
-        }
+        private string _loadedNeededTablesJson = string.Empty;
+        private bool _loadedNeededTablesFileExists;
 
         public MainWindow()
         {
@@ -147,6 +144,46 @@ namespace FoxProToMySqlMigrator
             return _neededTablesFileLoaded ? _neededTables : Array.Empty<string>();
         }
 
+        private bool EnsureNeededTablesReady()
+        {
+            if (ChkOnlySelectedTables.IsChecked != true)
+            {
+                return true;
+            }
+
+            if (NeededTablesJsonHasUnsavedChanges)
+            {
+                MessageBox.Show("Save the JSON changes before starting an operation.", "Unsaved JSON",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            try
+            {
+                var path = GetNeededTablesJsonPath();
+                if (File.Exists(path) != _loadedNeededTablesFileExists ||
+                    (File.Exists(path) && File.ReadAllText(path) != _loadedNeededTablesJson))
+                {
+                    LoadNeededTablesFromJson(showSuccessMessage: false);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not read needed-tables.json.\n\n{ex.Message}",
+                    "Validation Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
+            }
+
+            if (!_neededTablesFileLoaded || _neededTables.Count == 0)
+            {
+                MessageBox.Show("The table filter is enabled, but needed-tables.json has no valid table names.",
+                    "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            return true;
+        }
+
         private void UpdateSelectedTableCount()
         {
             if (TxtSelectedTableCount == null)
@@ -180,7 +217,11 @@ namespace FoxProToMySqlMigrator
                 {
                     _neededTablesFileLoaded = false;
                     _neededTables = new List<string>();
-                    LstNeededTables.ItemsSource = _neededTables;
+                    _loadedNeededTablesFileExists = false;
+                    _loadedNeededTablesJson = "{\n  \"tables\": []\n}";
+                    TxtNeededTablesJson.Text = _loadedNeededTablesJson;
+                    TxtNeededTablesJsonStatus.Text = "File missing. Edit the JSON and click Save JSON to create it.";
+                    UpdateNeededTablesSaveButton();
                     UpdateSelectedTableCount();
 
                     if (showSuccessMessage)
@@ -192,20 +233,14 @@ namespace FoxProToMySqlMigrator
                 }
 
                 var json = ReadNeededTablesJson(path);
-                var tableFile = JsonSerializer.Deserialize<NeededTablesFile>(json, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-
-                _neededTables = (tableFile?.Tables ?? new List<string>())
-                    .Select(table => table.Trim().Trim('`', '"', '\'').ToLowerInvariant())
-                    .Where(table => !string.IsNullOrWhiteSpace(table))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(table => table)
-                    .ToList();
+                _loadedNeededTablesJson = json;
+                _loadedNeededTablesFileExists = true;
+                TxtNeededTablesJson.Text = json;
+                _neededTables = ParseNeededTables(json);
 
                 _neededTablesFileLoaded = true;
-                LstNeededTables.ItemsSource = _neededTables;
+                TxtNeededTablesJsonStatus.Text = "Loaded from needed-tables.json. Edit and click Save JSON.";
+                UpdateNeededTablesSaveButton();
                 UpdateSelectedTableCount();
 
                 if (showSuccessMessage)
@@ -217,14 +252,84 @@ namespace FoxProToMySqlMigrator
             {
                 _neededTablesFileLoaded = false;
                 _neededTables = new List<string>();
-                LstNeededTables.ItemsSource = _neededTables;
+                TxtNeededTablesJsonStatus.Text = "Could not load the file. Fix the JSON and click Save JSON.";
+                UpdateNeededTablesSaveButton();
                 UpdateSelectedTableCount();
                 MessageBox.Show($"Could not load needed-tables.json.\n\n{ex.Message}", "Table Inventory", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
+        private static List<string> ParseNeededTables(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new JsonException("The root must be an object with a tables array.");
+            }
+
+            JsonElement tables = default;
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "tables", StringComparison.OrdinalIgnoreCase))
+                {
+                    tables = property.Value;
+                    break;
+                }
+            }
+
+            if (tables.ValueKind != JsonValueKind.Array)
+            {
+                throw new JsonException("The tables property must be an array of table names.");
+            }
+
+            var names = new List<string>();
+            foreach (var table in tables.EnumerateArray())
+            {
+                if (table.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(table.GetString()))
+                {
+                    throw new JsonException("Every entry in tables must be a non-empty string.");
+                }
+
+                names.Add(table.GetString()!.Trim().Trim('`', '"', '\'').ToLowerInvariant());
+            }
+
+            return names.Where(table => !string.IsNullOrWhiteSpace(table))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(table => table)
+                .ToList();
+        }
+
+        private bool NeededTablesJsonHasUnsavedChanges =>
+            TxtNeededTablesJson.Text != _loadedNeededTablesJson;
+
+        private void UpdateNeededTablesSaveButton()
+        {
+            if (BtnSaveNeededTablesJson != null)
+            {
+                BtnSaveNeededTablesJson.IsEnabled = NeededTablesJsonHasUnsavedChanges || !_neededTablesFileLoaded;
+            }
+        }
+
+        private void TxtNeededTablesJson_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            if (TxtNeededTablesJsonStatus != null && NeededTablesJsonHasUnsavedChanges)
+            {
+                TxtNeededTablesJsonStatus.Text = "Unsaved changes. Click Save JSON to update needed-tables.json.";
+            }
+
+            UpdateNeededTablesSaveButton();
+        }
+
         private static string GetNeededTablesJsonPath()
         {
+#if DEBUG
+            // A development run edits the repository file that the build copies to Data.
+            var projectFolder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", ".."));
+            if (File.Exists(Path.Combine(projectFolder, "FoxProToMySqlMigrator.csproj")))
+            {
+                return Path.Combine(projectFolder, "needed-tables.json");
+            }
+#endif
             return Path.Combine(AppSettings.AppDataFolder, "needed-tables.json");
         }
 
@@ -240,26 +345,65 @@ namespace FoxProToMySqlMigrator
 
         private void BtnReloadNeededTables_Click(object sender, RoutedEventArgs e)
         {
+            if (NeededTablesJsonHasUnsavedChanges &&
+                MessageBox.Show("Discard unsaved JSON changes and reload from disk?", "Reload JSON",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
             LoadNeededTablesFromJson(showSuccessMessage: true);
         }
 
-        private void BtnOpenNeededTablesJson_Click(object sender, RoutedEventArgs e)
+        private void BtnSaveNeededTablesJson_Click(object sender, RoutedEventArgs e)
+        {
+            SaveNeededTablesJson();
+        }
+
+        private bool SaveNeededTablesJson()
         {
             try
             {
-                Directory.CreateDirectory(AppSettings.AppDataFolder);
+                var json = TxtNeededTablesJson.Text;
+                var tables = ParseNeededTables(json);
+                var path = GetNeededTablesJsonPath();
 
-                Process.Start(new ProcessStartInfo
+                if (File.Exists(path) &&
+                    (!_loadedNeededTablesFileExists || File.ReadAllText(path) != _loadedNeededTablesJson) &&
+                    MessageBox.Show("needed-tables.json changed on disk. Overwrite those changes?", "Save JSON",
+                        MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 {
-                    FileName = File.Exists(GetNeededTablesJsonPath())
-                        ? GetNeededTablesJsonPath()
-                        : AppSettings.AppDataFolder,
-                    UseShellExecute = true
-                });
+                    return false;
+                }
+
+                var directory = Path.GetDirectoryName(path)!;
+                Directory.CreateDirectory(directory);
+                var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+                try
+                {
+                    File.WriteAllText(temporaryPath, json);
+                    File.Move(temporaryPath, path, overwrite: true);
+                }
+                finally
+                {
+                    if (File.Exists(temporaryPath))
+                    {
+                        File.Delete(temporaryPath);
+                    }
+                }
+                _loadedNeededTablesJson = json;
+                _loadedNeededTablesFileExists = true;
+                _neededTables = tables;
+                _neededTablesFileLoaded = true;
+                TxtNeededTablesJsonStatus.Text = $"Saved {tables.Count:N0} table(s) to needed-tables.json.";
+                UpdateNeededTablesSaveButton();
+                UpdateSelectedTableCount();
+                return true;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not open needed-tables.json.\n\n{ex.Message}", "Open JSON", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Could not save needed-tables.json.\n\n{ex.Message}", "Save JSON", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
             }
         }
 
@@ -407,6 +551,11 @@ namespace FoxProToMySqlMigrator
                 return;
             }
 
+            if (!EnsureNeededTablesReady())
+            {
+                return;
+            }
+
             var selectedTables = GetActiveTableFilter();
             if (selectedTables != null && selectedTables.Count == 0)
             {
@@ -450,6 +599,11 @@ namespace FoxProToMySqlMigrator
 
         private async Task StartMigrationAsync(MigrationCheckpoint? resumeFromCheckpoint)
         {
+            if (!EnsureNeededTablesReady())
+            {
+                return;
+            }
+
             SaveCurrentSettings();
 
             bool requestRetryAfterCleanup = false;
@@ -616,6 +770,11 @@ namespace FoxProToMySqlMigrator
             }
 
             if (!ValidateConnectionInputs())
+            {
+                return;
+            }
+
+            if (!EnsureNeededTablesReady())
             {
                 return;
             }
@@ -983,6 +1142,18 @@ namespace FoxProToMySqlMigrator
 
         protected override void OnClosing(CancelEventArgs e)
         {
+            if (NeededTablesJsonHasUnsavedChanges)
+            {
+                var result = MessageBox.Show("Save changes to needed-tables.json before closing?",
+                    "Unsaved JSON", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+                if (result == MessageBoxResult.Cancel ||
+                    (result == MessageBoxResult.Yes && !SaveNeededTablesJson()))
+                {
+                    e.Cancel = true;
+                    return;
+                }
+            }
+
             SaveCurrentSettings();
             base.OnClosing(e);
         }

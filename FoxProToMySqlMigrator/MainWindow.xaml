@@ -619,11 +619,12 @@
                                         Style="{StaticResource AppButtonStyle}"
                                         MinWidth="112"
                                         Click="BtnReloadNeededTables_Click"/>
-                                <Button Content="Open JSON"
+                                <Button x:Name="BtnSaveNeededTablesJson"
+                                        Content="Save JSON"
                                         Style="{StaticResource AppButtonStyle}"
                                         MinWidth="104"
                                         Margin="8,0,0,0"
-                                        Click="BtnOpenNeededTablesJson_Click"/>
+                                        Click="BtnSaveNeededTablesJson_Click"/>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -640,37 +641,23 @@
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0"
-                                       Text="Read-only list loaded from the same saved settings folder as the connection string."
+                            <TextBlock x:Name="TxtNeededTablesJsonStatus"
+                                       Grid.Row="0"
+                                       Text="Edit needed-tables.json, then click Save JSON."
                                        Foreground="{StaticResource SecondaryTextBrush}"
                                        FontSize="12"
                                        Margin="0,0,0,8"/>
-                            <ScrollViewer Grid.Row="1"
-                                          VerticalScrollBarVisibility="Auto"
-                                          HorizontalScrollBarVisibility="Disabled">
-                                <ItemsControl x:Name="LstNeededTables">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <UniformGrid Columns="4"/>
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Background="#101010"
-                                                    BorderBrush="{StaticResource PanelBorderBrush}"
-                                                    BorderThickness="1"
-                                                    CornerRadius="5"
-                                                    Padding="8,6"
-                                                    Margin="0,0,8,8">
-                                                <TextBlock Text="{Binding}"
-                                                           FontFamily="Consolas"
-                                                           FontSize="12"
-                                                           TextTrimming="CharacterEllipsis"/>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </ScrollViewer>
+                            <TextBox x:Name="TxtNeededTablesJson"
+                                     Grid.Row="1"
+                                     FontFamily="Consolas"
+                                     FontSize="13"
+                                     AcceptsReturn="True"
+                                     AcceptsTab="True"
+                                     TextWrapping="NoWrap"
+                                     VerticalContentAlignment="Top"
+                                     VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto"
+                                     TextChanged="TxtNeededTablesJson_TextChanged"/>
                         </Grid>
                     </Border>
                 </Grid>
